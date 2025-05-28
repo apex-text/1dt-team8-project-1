@@ -28,8 +28,39 @@ spark = SparkSession \
 
 # COMMAND ----------
 
+import os
+
+# 볼륨 경로 정의
+volume_path = "/Volumes/1dt_team8/default/movies"
+
+# 확인할 CSV 파일 목록
+csv_files = ["movies.csv", "ratings.csv", "links.csv", "tags.csv"]
+
+print(f"Checking for CSV files in: {volume_path}\n")
+
+all_files_exist = True
+for file_name in csv_files:
+    file_full_path = os.path.join(volume_path, file_name)
+    if os.path.exists(file_full_path):
+        print(f"'{file_name}' exists at: {file_full_path}")
+    else:
+        print(f"'{file_name}' DOES NOT exist at: {file_full_path}")
+        all_files_exist = False
+
+if all_files_exist:
+    print("\nAll specified CSV files are present in the volume.")
+else:
+    print("\nSome or all specified CSV files are missing from the volume.")
+
+# COMMAND ----------
+
+files = dbutils.fs.ls(f"{volume_path}") # List all the files
+display(files)                                           # Display the list of files
+
+# COMMAND ----------
+
 # Define the base path for your data in Unity Catalog Volumes
-uc_volume_path = "/Volumes/1dt_team8_managed/movie/movie"
+uc_volume_path = "/Volumes/1dt_team8/default/movies"
 
 # Load data from Unity Catalog Volume
 try:
