@@ -3,9 +3,7 @@ from databricks import sql
 import pandas as pd
 import config # config.py 파일에서 설정 정보를 가져옵니다.
 
-
 app = Flask(__name__)
-app.run(host='0.0.0.0')
 @app.route('/')
 def index():
     return render_template('index.html', result_df=None)
