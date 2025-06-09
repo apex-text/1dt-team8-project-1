@@ -17,6 +17,12 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# TMDB API 설정
+# TMDB_API_KEY 대신 TMDB_ACCESS_TOKEN을 사용합니다.
+TMDB_ACCESS_TOKEN = config.TMDB_ACCESS_TOKEN
+TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500" # 포스터 이미지 크기 설정
+
 # 쿠키 이름 정의
 INMV_COOKIE_NAME = "inmv_history"
 
@@ -42,6 +48,41 @@ def get_tmdb_id_from_movie_id(movie_id):
                 return None
     except Exception as e:
         app.logger.error(f"Databricks SQL 연결 또는 쿼리 오류: {e}")
+        return None
+
+def get_movie_details_from_tmdb(tmdb_id):
+    """
+    TMDB API를 사용하여 영화의 포스터와 한글 제목을 가져옵니다.
+    """
+    details_url = f"{TMDB_BASE_URL}/movie/{tmdb_id}"
+    tmdb_headers = { # TMDB API를 위한 별도의 헤더
+        "accept": "application/json",
+        "Authorization": f"Bearer {TMDB_ACCESS_TOKEN}"
+    }
+    params = {
+        "language": "ko-KR" # 한글 제목을 위해 ko-KR 설정
+    }
+    try:
+        response = requests.get(details_url, headers=tmdb_headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        poster_path = data.get("poster_path")
+        # 응답 예시에서 'title'이 한글 제목입니다.
+        title_ko = data.get("title") 
+
+        poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else None
+        
+        return {
+            "tmdb_id": tmdb_id,
+            "title_ko": title_ko,
+            "poster_url": poster_url
+        }
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"TMDB API 호출 오류 (TMDB ID: {tmdb_id}): {e}. 응답: {e.response.text if e.response else 'N/A'}")
+        return None
+    except Exception as e:
+        app.logger.error(f"TMDB 상세 정보 파싱 오류 (TMDB ID: {tmdb_id}): {e}")
         return None
 
 @app.route('/')
@@ -84,7 +125,7 @@ def recommend_movies():
     }
     # --- 요청 형식 변경 끝 ---
 
-    recommended_movie_ids = []
+    recommended_movie_tmdb_ids = [] # TMDB ID를 저장할 리스트
     try:
         response = requests.post(SERVING_URL, headers=HEADERS, json=payload)
         response.raise_for_status()
@@ -101,9 +142,9 @@ def recommend_movies():
                 for movie_id in model_recommended_movie_ids:
                     tmdb_id = get_tmdb_id_from_movie_id(movie_id)
                     if tmdb_id is not None:
-                        recommended_movie_ids.append(tmdb_id)
+                        recommended_movie_tmdb_ids.append(tmdb_id)
                     else:
-                        recommended_movie_ids.append(movie_id) # tmdbId를 찾을 수 없으면 원본 movieId 유지
+                        app.logger.warning(f"모델 추천 movieId {movie_id}에 대한 tmdbId를 찾을 수 없어 TMDB 정보 조회를 건너뜝니다.")
             else:
                 app.logger.error("Databricks Model Serving 응답에 'recommendations' 키가 없거나 형식이 올바르지 않습니다.")
                 return jsonify({"error": "추천 모델 응답 형식이 예상과 다릅니다."}), 500
@@ -112,7 +153,14 @@ def recommend_movies():
             return jsonify({"error": "추천 모델 응답 형식이 예상과 다릅니다."}), 500
         # --- 응답 파싱 형식 변경 끝 ---
 
-        outmv_str = ','.join(map(str, recommended_movie_ids))
+        # TMDB API를 통해 영화 상세 정보 가져오기
+        recommended_movie_details = []
+        for tmdb_id in recommended_movie_tmdb_ids:
+            details = get_movie_details_from_tmdb(tmdb_id)
+            if details:
+                recommended_movie_details.append(details)
+            else:
+                app.logger.warning(f"TMDB ID {tmdb_id}에 대한 상세 정보를 가져올 수 없습니다.")
 
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Databricks Model Serving 호출 오류: {e}. 응답: {e.response.text if e.response else 'N/A'}")
@@ -123,7 +171,7 @@ def recommend_movies():
 
     resp = make_response(jsonify({
         "input_movies": list(all_inmv_ids),
-        "recommended_movies": recommended_movie_ids,
+        "recommended_movies": recommended_movie_details, # TMDB 상세 정보를 포함한 리스트 전달
         "message": "영화 추천이 완료되었습니다."
     }))
 

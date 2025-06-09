@@ -6,13 +6,19 @@
     <title>영화 추천 시스템</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .container { max-width: 800px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="text"] { width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; }
         button { padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background-color: #0056b3; }
         .result-box { margin-top: 20px; padding: 15px; border: 1px dashed #007bff; background-color: #e6f7ff; border-radius: 8px; }
         .error-box { margin-top: 20px; padding: 15px; border: 1px dashed #ff4d4f; background-color: #fff0f0; border-radius: 8px; color: #ff4d4f;}
+        
+        /* 추천 영화 목록 스타일 */
+        .movie-list { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
+        .movie-item { text-align: center; width: 150px; }
+        .movie-item img { max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .movie-item p { margin-top: 5px; font-size: 0.9em; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -52,10 +58,29 @@
                 const data = await response.json();
 
                 if (response.ok) {
+                    let recommendedMoviesHtml = '';
+                    if (data.recommended_movies && data.recommended_movies.length > 0) {
+                        data.recommended_movies.forEach(movie => {
+                            const posterUrl = movie.poster_url || 'https://via.placeholder.com/150x225?text=No+Poster'; // 포스터 없으면 대체 이미지
+                            const title = movie.title_ko || `TMDB ID: ${movie.tmdb_id}`; // 한글 제목 없으면 TMDB ID
+                            recommendedMoviesHtml += `
+                                <div class="movie-item">
+                                    <img src="${posterUrl}" alt="${title} 포스터">
+                                    <p>${title}</p>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        recommendedMoviesHtml = '<p>추천할 영화가 없습니다.</p>';
+                    }
+
                     resultDiv.innerHTML = `
                         <h2>추천 결과</h2>
                         <p>현재 입력된 영화 ID: ${data.input_movies.join(', ')}</p>
-                        <p>추천 영화 ID: <strong>${data.recommended_movies.join(', ')}</strong></p>
+                        <h3>추천 영화:</h3>
+                        <div class="movie-list">
+                            ${recommendedMoviesHtml}
+                        </div>
                         <p>${data.message}</p>
                     `;
                     resultDiv.className = 'result-box';
