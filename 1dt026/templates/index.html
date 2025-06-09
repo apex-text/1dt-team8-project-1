@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>영화 추천 시스템</title>
+    <link rel="stylesheet" href="//code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .container { max-width: 800px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
@@ -14,91 +15,287 @@
         .result-box { margin-top: 20px; padding: 15px; border: 1px dashed #007bff; background-color: #e6f7ff; border-radius: 8px; }
         .error-box { margin-top: 20px; padding: 15px; border: 1px dashed #ff4d4f; background-color: #fff0f0; border-radius: 8px; color: #ff4d4f;}
         
-        /* 추천 영화 목록 스타일 */
-        .movie-list { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
-        .movie-item { text-align: center; width: 150px; }
+        /* 영화 목록 공통 스타일 */
+        .movie-list { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; justify-content: center; }
+        .movie-item { text-align: center; width: 150px; flex-shrink: 0; }
         .movie-item img { max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        .movie-item p { margin-top: 5px; font-size: 0.9em; font-weight: bold; }
+        .movie-item p { margin-top: 5px; font-size: 0.9em; font-weight: bold; word-break: keep-all; }
+
+        /* 선택된 영화 태그/카드 스타일 */
+        .selected-movies-container { 
+            margin-top: 15px; padding: 10px; border: 1px solid #eee; border-radius: 5px; background-color: #f9f9f9; 
+            min-height: 50px; 
+            display: flex; flex-wrap: wrap; gap: 10px;
+        }
+        .movie-tag-item { 
+            display: flex; /* Flexbox를 사용하여 내부 요소를 정렬 */
+            align-items: center; /* 세로 중앙 정렬 */
+            background-color: #d1ecf1; 
+            color: #0c5460; 
+            padding: 5px 10px; 
+            border-radius: 20px; /* 더 둥글게 */
+            font-size: 0.9em; 
+            white-space: nowrap; 
+            position: relative; /* 삭제 버튼 위치 조정을 위해 */
+            padding-right: 25px; /* 삭제 버튼 공간 확보 */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .movie-tag-item img {
+            width: 30px; /* 작은 포스터 크기 */
+            height: 45px; /* 비율 유지 */
+            object-fit: cover;
+            border-radius: 3px;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .movie-tag-item .title {
+            max-width: 100px; /* 제목이 너무 길어지지 않도록 */
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .movie-tag-item .remove-tag { 
+            cursor: pointer; 
+            font-weight: bold; 
+            color: #0c5460; 
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.1em;
+            line-height: 1;
+        }
+        .autocomplete-container { position: relative; }
+        .ui-autocomplete {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background-color: white;
+            border: 1px solid #ddd;
+            z-index: 1000; /* 다른 요소 위에 표시되도록 */
+        }
+        .ui-menu-item .ui-menu-item-wrapper { 
+            padding: 8px 10px; 
+            display: flex; 
+            align-items: center;
+        }
+        .ui-menu-item .ui-menu-item-wrapper img {
+            width: 40px; 
+            height: 60px; 
+            object-fit: cover;
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+        .ui-menu-item .ui-menu-item-wrapper .title-info {
+            flex-grow: 1;
+        }
+        .ui-state-active, .ui-widget-content .ui-state-active, .ui-widget-header .ui-state-active { background: #e0f7fa !important; border: none !important; color: #333 !important; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>영화 추천 받기</h1>
+        <h1>영화 추천 시스템</h1>
         <form id="recommendationForm">
-            <label for="inmv">입력 영화 ID (쉼표로 구분하여 추가):</label>
-            <input type="text" id="inmv" name="inmv" placeholder="예: 346,3356,77894"
-                   value="{{ current_inmv }}" required>
-
+            <label for="movieSearchInput">추천 받을 영화 검색:</label>
+            <div class="autocomplete-container">
+                <input type="text" id="movieSearchInput" placeholder="영화 제목을 입력하세요...">
+            </div>
+            <div id="selectedMoviesContainer" class="selected-movies-container">
+                </div>
+            <input type="hidden" id="selectedMovieLensIds" name="selected_movielens_ids" value="">
+            
             <button type="submit">추천 받기</button>
         </form>
 
         <div id="result"></div>
     </div>
 
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
     <script>
-        document.getElementById('recommendationForm').addEventListener('submit', async function(event) {
-            event.preventDefault();
+        $(document).ready(function() {
+            const selectedMoviesContainer = $('#selectedMoviesContainer');
+            const selectedMovieLensIdsInput = $('#selectedMovieLensIds');
+            let currentSelectedIds = []; // 현재 선택된 MovieLens ID들을 저장
 
-            const inmv = document.getElementById('inmv').value;
-            const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = '추천 중...';
-            resultDiv.className = 'result-box';
+            function addSelectedMovieCard(movie) {
+                const movielensId = movie.movielens_id || movie.movie_id;
+                if (!movielensId || currentSelectedIds.includes(movielensId)) {
+                    return;
+                }
+                currentSelectedIds.push(movielensId);
 
-            try {
-                const response = await fetch('/recommend', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: new URLSearchParams({
-                        inmv: inmv
-                    })
-                });
+                const posterUrl = movie.poster_url || 'https://via.placeholder.com/30x45?text=No+Img';
+                const title = movie.title_ko || movie.title || `ID ${movielensId}`;
+                const displayTitle = title + (movie.release_date ? ` (${movie.release_date.substring(0, 4)})` : '');
 
-                const data = await response.json();
-
-                if (response.ok) {
-                    let recommendedMoviesHtml = '';
-                    if (data.recommended_movies && data.recommended_movies.length > 0) {
-                        data.recommended_movies.forEach(movie => {
-                            const posterUrl = movie.poster_url || 'https://via.placeholder.com/150x225?text=No+Poster'; // 포스터 없으면 대체 이미지
-                            const title = movie.title_ko || `TMDB ID: ${movie.tmdb_id}`; // 한글 제목 없으면 TMDB ID
-                            recommendedMoviesHtml += `
-                                <div class="movie-item">
+                const movieCard = `<span class="movie-tag-item" data-movielens-id="${movielensId}">
                                     <img src="${posterUrl}" alt="${title} 포스터">
-                                    <p>${title}</p>
-                                </div>
-                            `;
-                        });
-                    } else {
-                        recommendedMoviesHtml = '<p>추천할 영화가 없습니다.</p>';
-                    }
+                                    <span class="title">${displayTitle}</span>
+                                    <span class="remove-tag">&times;</span>
+                                  </span>`;
+                selectedMoviesContainer.append(movieCard);
+                updateHiddenInput();
+            }
 
-                    resultDiv.innerHTML = `
-                        <h2>추천 결과</h2>
-                        <p>현재 입력된 영화 ID: ${data.input_movies.join(', ')}</p>
-                        <h3>추천 영화:</h3>
-                        <div class="movie-list">
-                            ${recommendedMoviesHtml}
-                        </div>
-                        <p>${data.message}</p>
-                    `;
-                    resultDiv.className = 'result-box';
-                    document.getElementById('inmv').value = data.input_movies.join(',');
-                } else {
+            function removeSelectedMovie(movielensId) {
+                currentSelectedIds = currentSelectedIds.filter(id => id !== movielensId);
+                $(`.movie-tag-item[data-movielens-id="${movielensId}"]`).remove();
+                updateHiddenInput();
+            }
+
+            function updateHiddenInput() {
+                selectedMovieLensIdsInput.val(currentSelectedIds.join(','));
+            }
+
+            // 초기 로딩 시 currentSelectedIds를 비우고, selectedMoviesContainer도 비움
+            currentSelectedIds = [];
+            selectedMoviesContainer.empty();
+            updateHiddenInput(); 
+
+            // 태그 제거 이벤트 위임
+            selectedMoviesContainer.on('click', '.remove-tag', function() {
+                const movielensIdToRemove = parseInt($(this).parent().data('movielens-id'));
+                removeSelectedMovie(movielensIdToRemove);
+            });
+
+            // jQuery UI Autocomplete 설정
+            $("#movieSearchInput").autocomplete({
+                source: function(request, response) {
+                    $.getJSON("/search_movies", {
+                        query: request.term
+                    }, function(data) {
+                        response($.map(data, function(item) {
+                            return {
+                                label: `<img src="${item.poster_url || 'https://via.placeholder.com/40x60?text=No+Img'}" alt="${item.title} 포스터">
+                                        <div class="title-info">
+                                            <div>${item.title}</div>
+                                            <small>${item.release_date ? item.release_date.substring(0, 4) : '개봉일 미상'}</small>
+                                        </div>`,
+                                value: item.title, // 검색창에 표시될 값 (선택 후)
+                                tmdb_id: item.tmdb_id, // TMDB ID (선택 시 필요)
+                                movie_title: item.title, // 태그에 사용할 영화 제목 (원본 제목)
+                                poster_url: item.poster_url, // 태그에 사용할 포스터
+                                release_date: item.release_date // 개봉일
+                            };
+                        }));
+                    });
+                },
+                minLength: 2, // 최소 입력 문자 수
+                select: function(event, ui) {
+                    const selectedTmdbId = ui.item.tmdb_id;
+                    const selectedMovieData = {
+                        title: ui.item.movie_title,
+                        poster_url: ui.item.poster_url,
+                        release_date: ui.item.release_date
+                    };
+
+                    // TMDB ID를 사용하여 MovieLens ID를 서버로부터 가져옴
+                    $.getJSON("/get_movielens_id", { tmdb_id: selectedTmdbId }, function(data) {
+                        if (data.movielens_id) {
+                            selectedMovieData.movielens_id = data.movielens_id; // MovieLens ID 추가
+                            addSelectedMovieCard(selectedMovieData);
+                        } else {
+                            alert(`MovieLens ID를 찾을 수 없습니다. (TMDB ID: ${selectedTmdbId})`);
+                        }
+                    }).fail(function() {
+                        alert("MovieLens ID를 가져오는 데 실패했습니다. 다시 시도해주세요.");
+                    });
+
+                    $(this).val(""); // 검색창 비우기
+                    return false; // Autocomplete가 input 값을 자동으로 변경하지 않도록
+                }
+            }).data("ui-autocomplete")._renderItem = function(ul, item) {
+                // 자동 완성 항목 렌더링을 사용자 정의 (이미지 포함)
+                return $("<li>")
+                    .append($("<div>").html(item.label))
+                    .appendTo(ul);
+            };
+
+            // 폼 제출 이벤트
+            document.getElementById('recommendationForm').addEventListener('submit', async function(event) {
+                event.preventDefault();
+
+                const selectedMovieLensIds = document.getElementById('selectedMovieLensIds').value;
+                const movieIdsArray = selectedMovieLensIds.split(',').filter(id => id.trim() !== ''); // 실제 ID만 추출
+
+                // 클라이언트 측에서 최소 개수 확인
+                if (movieIdsArray.length < 3) {
+                    const resultDiv = document.getElementById('result');
                     resultDiv.innerHTML = `
                         <h2>오류 발생</h2>
-                        <p>오류: ${data.error || '알 수 없는 오류'}</p>
+                        <p>최소 3개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 ${movieIdsArray.length}개 선택됨.</p>
+                    `;
+                    resultDiv.className = 'error-box';
+                    return; // 함수 실행 중단
+                }
+
+                const resultDiv = document.getElementById('result');
+                resultDiv.innerHTML = '추천 중...';
+                resultDiv.className = 'result-box';
+
+                try {
+                    const response = await fetch('/recommend', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: new URLSearchParams({
+                            selected_movielens_ids: selectedMovieLensIds
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        let recommendedMoviesHtml = '';
+                        if (data.recommended_movies && data.recommended_movies.length > 0) {
+                            data.recommended_movies.forEach(movie => {
+                                const posterUrl = movie.poster_url || 'https://via.placeholder.com/150x225?text=No+Poster';
+                                const title = movie.title_ko || `TMDB ID: ${movie.tmdb_id}`;
+                                recommendedMoviesHtml += `
+                                    <div class="movie-item">
+                                        <img src="${posterUrl}" alt="${title} 포스터">
+                                        <p>${title}</p>
+                                    </div>
+                                `;
+                            });
+                        } else {
+                            recommendedMoviesHtml = '<p>추천할 영화가 없습니다.</p>';
+                        }
+
+                        resultDiv.innerHTML = `
+                            <h2>추천 결과</h2>
+                            <div class="movie-list">
+                                ${recommendedMoviesHtml}
+                            </div>
+                            <p>${data.message}</p>
+                        `;
+                        resultDiv.className = 'result-box';
+
+                        currentSelectedIds = [];
+                        selectedMoviesContainer.empty();
+                        data.input_movies.forEach(detail => {
+                            addSelectedMovieCard(detail);
+                        });
+                        updateHiddenInput();
+                        
+                    } else {
+                        // 서버에서 온 에러 메시지를 표시
+                        resultDiv.innerHTML = `
+                            <h2>오류 발생</h2>
+                            <p>오류: ${data.error || '알 수 없는 오류'}</p>
+                        `;
+                        resultDiv.className = 'error-box';
+                    }
+                } catch (error) {
+                    resultDiv.innerHTML = `
+                        <h2>오류 발생</h2>
+                        <p>네트워크 오류 또는 서버 응답 문제: ${error.message}</p>
                     `;
                     resultDiv.className = 'error-box';
                 }
-            } catch (error) {
-                resultDiv.innerHTML = `
-                    <h2>오류 발생</h2>
-                    <p>네트워크 오류 또는 서버 응답 문제: ${error.message}</p>
-                `;
-                resultDiv.className = 'error-box';
-            }
+            });
         });
     </script>
 </body>

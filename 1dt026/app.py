@@ -18,17 +18,13 @@ HEADERS = {
 }
 
 # TMDB API 설정
-# TMDB_API_KEY 대신 TMDB_ACCESS_TOKEN을 사용합니다.
 TMDB_ACCESS_TOKEN = config.TMDB_ACCESS_TOKEN
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500" # 포스터 이미지 크기 설정
 
-# 쿠키 이름 정의
-INMV_COOKIE_NAME = "inmv_history"
-
 def get_tmdb_id_from_movie_id(movie_id):
     """
-    주어진 movieId에 해당하는 tmdbId를 Databricks에서 조회합니다.
+    주어진 MovieLens movieId에 해당하는 tmdbId를 Databricks에서 조회합니다.
     """
     try:
         with sql.connect(
@@ -44,10 +40,34 @@ def get_tmdb_id_from_movie_id(movie_id):
             if result:
                 return result[0]  # tmdbId 반환
             else:
-                app.logger.warning(f"movieId {movie_id}에 대한 tmdbId를 찾을 수 없습니다.")
+                app.logger.warning(f"MovieLens movieId {movie_id}에 대한 tmdbId를 찾을 수 없습니다.")
                 return None
     except Exception as e:
-        app.logger.error(f"Databricks SQL 연결 또는 쿼리 오류: {e}")
+        app.logger.error(f"Databricks SQL 연결 또는 쿼리 오류 (MovieLens movieId -> tmdbId): {e}")
+        return None
+
+def get_movie_id_from_tmdb_id(tmdb_id):
+    """
+    주어진 tmdbId에 해당하는 MovieLens movieId를 Databricks에서 조회합니다.
+    """
+    try:
+        with sql.connect(
+            server_hostname=config.SERVER_HOSTNAME,
+            http_path=config.DB_HTTP_PATH,
+            access_token=config.ACCESS_TOKEN
+        ) as connection:
+            cursor = connection.cursor()
+            query = f"SELECT movieId FROM `1dt_team8_databricks`.`movielens-small`.links WHERE tmdbId = {tmdb_id}"
+            cursor.execute(query)
+            result = cursor.fetchone()
+            cursor.close()
+            if result:
+                return result[0]  # MovieLens movieId 반환
+            else:
+                app.logger.warning(f"tmdbId {tmdb_id}에 대한 MovieLens movieId를 찾을 수 없습니다.")
+                return None
+    except Exception as e:
+        app.logger.error(f"Databricks SQL 연결 또는 쿼리 오류 (tmdbId -> MovieLens movieId): {e}")
         return None
 
 def get_movie_details_from_tmdb(tmdb_id):
@@ -68,7 +88,6 @@ def get_movie_details_from_tmdb(tmdb_id):
         data = response.json()
         
         poster_path = data.get("poster_path")
-        # 응답 예시에서 'title'이 한글 제목입니다.
         title_ko = data.get("title") 
 
         poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else None
@@ -76,7 +95,8 @@ def get_movie_details_from_tmdb(tmdb_id):
         return {
             "tmdb_id": tmdb_id,
             "title_ko": title_ko,
-            "poster_url": poster_url
+            "poster_url": poster_url,
+            "release_date": data.get("release_date", "") # 개봉일 추가
         }
     except requests.exceptions.RequestException as e:
         app.logger.error(f"TMDB API 호출 오류 (TMDB ID: {tmdb_id}): {e}. 응답: {e.response.text if e.response else 'N/A'}")
@@ -87,73 +107,109 @@ def get_movie_details_from_tmdb(tmdb_id):
 
 @app.route('/')
 def index():
-    current_inmv_str = request.cookies.get(INMV_COOKIE_NAME, "")
-    return render_template('index.html', current_inmv=current_inmv_str)
+    return render_template('index.html', current_inmv_details=[])
+
+@app.route('/search_movies', methods=['GET'])
+def search_movies():
+    query = request.args.get('query', '')
+    if not query:
+        return jsonify([])
+
+    search_url = f"{TMDB_BASE_URL}/search/movie"
+    tmdb_headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {TMDB_ACCESS_TOKEN}"
+    }
+    params = {
+        "query": query,
+        "language": "ko-KR" # 한글 결과 선호
+    }
+
+    try:
+        response = requests.get(search_url, headers=tmdb_headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        results = []
+        for movie in data.get("results", [])[:10]: # 최대 10개 결과 반환
+            tmdb_id = movie.get("id")
+            title = movie.get("title")
+            release_date = movie.get("release_date", "")
+            poster_path = movie.get("poster_path")
+            poster_url = f"{TMDB_IMAGE_BASE_URL}{poster_path}" if poster_path else None
+            
+            results.append({
+                "tmdb_id": tmdb_id, 
+                "title": title,
+                "release_date": release_date,
+                "poster_url": poster_url
+            })
+        return jsonify(results)
+
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"TMDB 영화 검색 API 호출 오류: {e}. 응답: {e.response.text if e.response else 'N/A'}")
+        return jsonify({"error": "영화 검색 중 오류가 발생했습니다."}), 500
+    except Exception as e:
+        app.logger.error(f"알 수 없는 오류 발생 (영화 검색): {e}")
+        return jsonify({"error": f"서버 오류: {e}"}), 500
+
+@app.route('/get_movielens_id', methods=['GET'])
+def get_movielens_id_for_tmdb():
+    tmdb_id = request.args.get('tmdb_id', type=int)
+    if not tmdb_id:
+        return jsonify({"error": "TMDB ID가 필요합니다."}), 400
+    
+    movielens_id = get_movie_id_from_tmdb_id(tmdb_id)
+    if movielens_id is not None:
+        return jsonify({"movielens_id": movielens_id})
+    else:
+        return jsonify({"error": f"TMDB ID {tmdb_id}에 해당하는 MovieLens ID를 찾을 수 없습니다."}), 404
 
 @app.route('/recommend', methods=['POST'])
 def recommend_movies():
-    new_input_movie_id_str = request.form.get('inmv')
-    if not new_input_movie_id_str:
-        return jsonify({"error": "영화 ID를 입력해야 합니다."}), 400
-
-    existing_inmv_str = request.cookies.get(INMV_COOKIE_NAME, "")
-
-    all_inmv_ids = set()
-    if existing_inmv_str:
-        try:
-            all_inmv_ids.update(int(x.strip()) for x in existing_inmv_str.split(',') if x.strip())
-        except ValueError:
-            app.logger.warning(f"Invalid existing inmv cookie value: {existing_inmv_str}")
-
+    selected_movielens_ids_str = request.form.get('selected_movielens_ids')
+    
     try:
-        all_inmv_ids.update(int(x.strip()) for x in new_input_movie_id_str.split(',') if x.strip())
+        all_inmv_ids = [int(x.strip()) for x in selected_movielens_ids_str.split(',') if x.strip()]
     except ValueError:
         return jsonify({"error": "유효하지 않은 영화 ID 형식이 포함되어 있습니다."}), 400
+    
+    movie_history_list = sorted(list(set(all_inmv_ids)))
 
-    merged_inmv_str = ','.join(map(str, sorted(list(all_inmv_ids))))
-
-    # --- 요청 형식 변경 시작 ---
-    # `movie_history` 리스트를 직접 JSON payload에 포함합니다.
-    movie_history_list = list(all_inmv_ids)
-    if not movie_history_list:
-        return jsonify({"error": "유효한 영화 ID가 없습니다. 적어도 하나의 영화 ID를 입력해주세요."}), 400
+    # 최소 3개 이상의 영화가 입력되었는지 확인
+    if len(movie_history_list) < 3:
+        return jsonify({"error": f"최소 3개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 {len(movie_history_list)}개 선택됨."}), 400
 
     payload = {
         "inputs": {
-            "movie_history": movie_history_list # 요청 형식에 맞게 movie_history 리스트 전달
+            "movie_history": movie_history_list
         }
     }
-    # --- 요청 형식 변경 끝 ---
 
-    recommended_movie_tmdb_ids = [] # TMDB ID를 저장할 리스트
+    recommended_movie_tmdb_ids = []
     try:
         response = requests.post(SERVING_URL, headers=HEADERS, json=payload)
         response.raise_for_status()
 
         recommendations_data = response.json()
 
-        # --- 응답 파싱 형식 변경 시작 ---
-        # "predictions" 키 아래에 있는 리스트의 첫 번째 요소에서 "recommendations" 키를 찾습니다.
         if "predictions" in recommendations_data and isinstance(recommendations_data["predictions"], list) and len(recommendations_data["predictions"]) > 0:
             first_prediction = recommendations_data["predictions"][0]
             if "recommendations" in first_prediction and isinstance(first_prediction["recommendations"], list):
                 model_recommended_movie_ids = first_prediction["recommendations"]
-                # movie_id를 tmdbId로 변환
                 for movie_id in model_recommended_movie_ids:
                     tmdb_id = get_tmdb_id_from_movie_id(movie_id)
                     if tmdb_id is not None:
                         recommended_movie_tmdb_ids.append(tmdb_id)
                     else:
-                        app.logger.warning(f"모델 추천 movieId {movie_id}에 대한 tmdbId를 찾을 수 없어 TMDB 정보 조회를 건너뜝니다.")
+                        app.logger.warning(f"모델 추천 MovieLens movieId {movie_id}에 대한 tmdbId를 찾을 수 없어 TMDB 정보 조회를 건너뜝니다.")
             else:
                 app.logger.error("Databricks Model Serving 응답에 'recommendations' 키가 없거나 형식이 올바르지 않습니다.")
                 return jsonify({"error": "추천 모델 응답 형식이 예상과 다릅니다."}), 500
         else:
             app.logger.error("Databricks Model Serving 응답에 'predictions' 키가 없거나 형식이 올바르지 않습니다.")
             return jsonify({"error": "추천 모델 응답 형식이 예상과 다릅니다."}), 500
-        # --- 응답 파싱 형식 변경 끝 ---
 
-        # TMDB API를 통해 영화 상세 정보 가져오기
         recommended_movie_details = []
         for tmdb_id in recommended_movie_tmdb_ids:
             details = get_movie_details_from_tmdb(tmdb_id)
@@ -169,13 +225,25 @@ def recommend_movies():
         app.logger.error(f"알 수 없는 오류 발생: {e}")
         return jsonify({"error": f"서버 오류: {e}"}), 500
 
+    current_input_movie_details = []
+    for ml_id in movie_history_list:
+        tmdb_id = get_tmdb_id_from_movie_id(ml_id)
+        if tmdb_id:
+            details = get_movie_details_from_tmdb(tmdb_id)
+            if details:
+                details['movie_id'] = ml_id # MovieLens ID 추가
+                current_input_movie_details.append(details)
+            else:
+                current_input_movie_details.append({"movie_id": ml_id, "title_ko": f"ID {ml_id} (정보 없음)", "poster_url": None, "tmdb_id": tmdb_id})
+        else:
+            current_input_movie_details.append({"movie_id": ml_id, "title_ko": f"ID {ml_id} (TMDB ID 없음)", "poster_url": None, "tmdb_id": None})
+
+
     resp = make_response(jsonify({
-        "input_movies": list(all_inmv_ids),
-        "recommended_movies": recommended_movie_details, # TMDB 상세 정보를 포함한 리스트 전달
+        "input_movies": current_input_movie_details,
+        "recommended_movies": recommended_movie_details,
         "message": "영화 추천이 완료되었습니다."
     }))
-
-    resp.set_cookie(INMV_COOKIE_NAME, merged_inmv_str)
 
     return resp
 
