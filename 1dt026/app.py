@@ -8,7 +8,6 @@ import config
 from databricks import sql
 
 app = Flask(__name__)
-app.secret_key = config.FLASK_SECRET_KEY
 
 # Databricks Model Serving 엔드포인트 URL 및 헤더 설정
 SERVING_URL = f"https://{config.SERVER_HOSTNAME}{config.HTTP_PATH}"
