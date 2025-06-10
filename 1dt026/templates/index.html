@@ -20,6 +20,10 @@
         .movie-item { text-align: center; width: 150px; flex-shrink: 0; }
         .movie-item img { max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
         .movie-item p { margin-top: 5px; font-size: 0.9em; font-weight: bold; word-break: keep-all; }
+        /* 링크 스타일 */
+        .movie-item p a { text-decoration: none; color: inherit; }
+        .movie-item p a:hover { text-decoration: underline; }
+
 
         /* 선택된 영화 태그/카드 스타일 */
         .selected-movies-container { 
@@ -148,18 +152,15 @@
                 selectedMovieLensIdsInput.val(currentSelectedIds.join(','));
             }
 
-            // 초기 로딩 시 currentSelectedIds를 비우고, selectedMoviesContainer도 비움
             currentSelectedIds = [];
             selectedMoviesContainer.empty();
             updateHiddenInput(); 
 
-            // 태그 제거 이벤트 위임
             selectedMoviesContainer.on('click', '.remove-tag', function() {
                 const movielensIdToRemove = parseInt($(this).parent().data('movielens-id'));
                 removeSelectedMovie(movielensIdToRemove);
             });
 
-            // jQuery UI Autocomplete 설정
             $("#movieSearchInput").autocomplete({
                 source: function(request, response) {
                     $.getJSON("/search_movies", {
@@ -172,16 +173,16 @@
                                             <div>${item.title}</div>
                                             <small>${item.release_date ? item.release_date.substring(0, 4) : '개봉일 미상'}</small>
                                         </div>`,
-                                value: item.title, // 검색창에 표시될 값 (선택 후)
-                                tmdb_id: item.tmdb_id, // TMDB ID (선택 시 필요)
-                                movie_title: item.title, // 태그에 사용할 영화 제목 (원본 제목)
-                                poster_url: item.poster_url, // 태그에 사용할 포스터
-                                release_date: item.release_date // 개봉일
+                                value: item.title,
+                                tmdb_id: item.tmdb_id,
+                                movie_title: item.title,
+                                poster_url: item.poster_url,
+                                release_date: item.release_date
                             };
                         }));
                     });
                 },
-                minLength: 2, // 최소 입력 문자 수
+                minLength: 2,
                 select: function(event, ui) {
                     const selectedTmdbId = ui.item.tmdb_id;
                     const selectedMovieData = {
@@ -190,44 +191,40 @@
                         release_date: ui.item.release_date
                     };
 
-                    // TMDB ID를 사용하여 MovieLens ID를 서버로부터 가져옴
                     $.getJSON("/get_movielens_id", { tmdb_id: selectedTmdbId }, function(data) {
                         if (data.movielens_id) {
-                            selectedMovieData.movielens_id = data.movielens_id; // MovieLens ID 추가
+                            selectedMovieData.movielens_id = data.movielens_id;
                             addSelectedMovieCard(selectedMovieData);
                         } else {
                             alert(`MovieLens ID를 찾을 수 없습니다. (TMDB ID: ${selectedTmdbId})`);
                         }
                     }).fail(function() {
-                        alert("MovieLens ID를 가져오는 데 실패했습니다. 다시 시도해주세요.");
+                        alert("학습 데이터베이스에 없는 영화입니다. 다른 영화로 시도해주세요.");
                     });
 
-                    $(this).val(""); // 검색창 비우기
-                    return false; // Autocomplete가 input 값을 자동으로 변경하지 않도록
+                    $(this).val("");
+                    return false;
                 }
             }).data("ui-autocomplete")._renderItem = function(ul, item) {
-                // 자동 완성 항목 렌더링을 사용자 정의 (이미지 포함)
                 return $("<li>")
                     .append($("<div>").html(item.label))
                     .appendTo(ul);
             };
 
-            // 폼 제출 이벤트
             document.getElementById('recommendationForm').addEventListener('submit', async function(event) {
                 event.preventDefault();
 
                 const selectedMovieLensIds = document.getElementById('selectedMovieLensIds').value;
-                const movieIdsArray = selectedMovieLensIds.split(',').filter(id => id.trim() !== ''); // 실제 ID만 추출
+                const movieIdsArray = selectedMovieLensIds.split(',').filter(id => id.trim() !== '');
 
-                // 클라이언트 측에서 최소 개수 확인
-                if (movieIdsArray.length < 3) {
+                if (movieIdsArray.length < 2) {
                     const resultDiv = document.getElementById('result');
                     resultDiv.innerHTML = `
                         <h2>오류 발생</h2>
-                        <p>최소 3개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 ${movieIdsArray.length}개 선택됨.</p>
+                        <p>최소 2개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 ${movieIdsArray.length}개 선택됨.</p>
                     `;
                     resultDiv.className = 'error-box';
-                    return; // 함수 실행 중단
+                    return;
                 }
 
                 const resultDiv = document.getElementById('result');
@@ -253,10 +250,12 @@
                             data.recommended_movies.forEach(movie => {
                                 const posterUrl = movie.poster_url || 'https://via.placeholder.com/150x225?text=No+Poster';
                                 const title = movie.title_ko || `TMDB ID: ${movie.tmdb_id}`;
+                                // TMDB 링크 추가: tmdb_id를 사용하여 링크를 생성하고 새 탭에서 열리도록 target="_blank" 추가
+                                const tmdbLink = `https://www.themoviedb.org/movie/${movie.tmdb_id}`;
                                 recommendedMoviesHtml += `
                                     <div class="movie-item">
                                         <img src="${posterUrl}" alt="${title} 포스터">
-                                        <p>${title}</p>
+                                        <p><a href="${tmdbLink}" target="_blank">${title}</a></p>
                                     </div>
                                 `;
                             });
@@ -281,7 +280,6 @@
                         updateHiddenInput();
                         
                     } else {
-                        // 서버에서 온 에러 메시지를 표시
                         resultDiv.innerHTML = `
                             <h2>오류 발생</h2>
                             <p>오류: ${data.error || '알 수 없는 오류'}</p>

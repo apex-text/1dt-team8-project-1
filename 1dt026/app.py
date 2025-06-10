@@ -32,7 +32,7 @@ def get_tmdb_id_from_movie_id(movie_id):
             access_token=config.ACCESS_TOKEN
         ) as connection:
             cursor = connection.cursor()
-            query = f"SELECT tmdbId FROM `1dt_team8_databricks`.`movielens-small`.links WHERE movieId = {movie_id}"
+            query = f"SELECT tmdbId FROM `1dt_team8_databricks`.`movielens-32m`.links WHERE movieId = {movie_id}"
             cursor.execute(query)
             result = cursor.fetchone()
             cursor.close()
@@ -56,7 +56,7 @@ def get_movie_id_from_tmdb_id(tmdb_id):
             access_token=config.ACCESS_TOKEN
         ) as connection:
             cursor = connection.cursor()
-            query = f"SELECT movieId FROM `1dt_team8_databricks`.`movielens-small`.links WHERE tmdbId = {tmdb_id}"
+            query = f"SELECT movieId FROM `1dt_team8_databricks`.`movielens-32m`.links WHERE tmdbId = {tmdb_id}"
             cursor.execute(query)
             result = cursor.fetchone()
             cursor.close()
@@ -176,8 +176,8 @@ def recommend_movies():
     movie_history_list = sorted(list(set(all_inmv_ids)))
 
     # 최소 3개 이상의 영화가 입력되었는지 확인
-    if len(movie_history_list) < 3:
-        return jsonify({"error": f"최소 3개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 {len(movie_history_list)}개 선택됨."}), 400
+    if len(movie_history_list) < 2:
+        return jsonify({"error": f"최소 2개 이상의 영화를 선택해야 추천을 받을 수 있습니다. 현재 {len(movie_history_list)}개 선택됨."}), 400
 
     payload = {
         "inputs": {
